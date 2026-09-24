@@ -29,14 +29,15 @@ func EvaluatePluginCompatibility(manifest PluginManifest, host PluginHostInfo) P
 		result.Message = "插件协议版本与当前 Sub2API 不兼容"
 		return result
 	}
-	if !matchesSemverRange(host.Version, manifest.Requires.Sub2API) {
+	hostVersion := hostSemverBase(host.Version)
+	if !matchesSemverRange(hostVersion, manifest.Requires.Sub2API) {
 		result.Status = "incompatible"
 		result.Message = fmt.Sprintf("当前 Sub2API %s 不满足插件要求 %s", host.Version, manifest.Requires.Sub2API)
 		return result
 	}
 	result.Compatible = true
 	for _, tested := range manifest.Requires.TestedSub2APIVersions {
-		if normalizeSemver(tested) == normalizeSemver(host.Version) {
+		if normalizeSemver(tested) == normalizeSemver(hostVersion) {
 			result.Tested = true
 			break
 		}
@@ -49,6 +50,15 @@ func EvaluatePluginCompatibility(manifest PluginManifest, host PluginHostInfo) P
 		result.Message = "版本范围兼容，但插件未声明已测试当前 Sub2API 版本"
 	}
 	return result
+}
+
+// hostSemverBase maps fork builds (0.2.8.1) to their upstream base (0.2.8)
+// for compatibility checks; the full version is still what gets displayed.
+func hostSemverBase(version string) string {
+	if parts := strings.Split(strings.TrimSpace(version), "."); len(parts) == 4 {
+		return strings.Join(parts[:3], ".")
+	}
+	return version
 }
 
 func normalizeSemver(version string) string {

@@ -46,3 +46,15 @@ func TestMatchesSemverRange(t *testing.T) {
 	assert.False(t, matchesSemverRange("dev", ">=0.1.0"))
 	assert.False(t, matchesSemverRange("0.1.179", "^0.1.0"))
 }
+
+func TestEvaluatePluginCompatibilityForkVersionUsesUpstreamBase(t *testing.T) {
+	manifest := testPluginManifest(nil)
+	manifest.Requires.Sub2API = ">=0.1.179 <0.2.0"
+	manifest.Requires.TestedSub2APIVersions = []string{"0.1.179"}
+
+	result := EvaluatePluginCompatibility(manifest, PluginHostInfo{Version: "0.1.179.1"})
+
+	require.True(t, result.Compatible)
+	assert.True(t, result.Tested)
+	assert.Equal(t, "0.1.179.1", result.CurrentSub2API)
+}
