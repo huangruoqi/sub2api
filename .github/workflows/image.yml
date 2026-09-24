@@ -1,0 +1,60 @@
+name: Image
+
+# Builds the fork's image to GHCR. Railway services deploy from these tags:
+#   dev branch  -> ghcr.io/<owner>/sub2api:dev
+#   main branch -> ghcr.io/<owner>/sub2api:main
+on:
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # Optional: Railway project tokens, each scoped to its environment. Unset = skip redeploy.
+      RAILWAY_TOKEN: ${{ github.ref_name == 'main' && secrets.RAILWAY_TOKEN_PRODUCTION || secrets.RAILWAY_TOKEN_DEV }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64 # ponytail: Railway runs amd64 only; add arm64 if you self-host on ARM
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            COMMIT=${{ github.sha }}
+            GOPROXY=https://proxy.golang.org,direct
+            GOSUMDB=sum.golang.org
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Redeploy on Railway (pull new image)
+        if: env.RAILWAY_TOKEN != ''
+        run: npx -y @railway/cli redeploy --service sub2api --from-source --yes
