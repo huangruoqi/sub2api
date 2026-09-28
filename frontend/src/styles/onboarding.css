@@ -98,6 +98,12 @@
   background-color: transparent !important;
 }
 .dark .theme-tour-popover .driver-popover-description { color: #cbd5e1 !important; }
+/* ponytail: i18n tour steps hard-code light inline callout colors; override by attribute match rather than rewriting the strings */
+.dark .theme-tour-popover .driver-popover-description [style*="background: #eff6ff"] { background: rgba(59, 130, 246, 0.15) !important; }
+.dark .theme-tour-popover .driver-popover-description [style*="background: #f0fdf4"] { background: rgba(16, 185, 129, 0.15) !important; }
+.dark .theme-tour-popover .driver-popover-description [style*="background: #fef3c7"] { background: rgba(245, 158, 11, 0.15) !important; }
+.dark .theme-tour-popover .driver-popover-description [style*="background: #fee2e2"] { background: rgba(239, 68, 68, 0.15) !important; }
+.dark .theme-tour-popover .driver-popover-description [style*="color: #6b7280"] { color: #94a3b8 !important; }
 
 /* 5. Footer Area - Flex Row with Left/Right Containers */
 .theme-tour-popover .driver-popover-footer {
