@@ -251,30 +251,27 @@ func (s *bodyState) apply(d *Delta) error {
 }
 
 func (s *bodyState) body(field string) json.RawMessage {
-	var b bytes.Buffer
-	b.WriteByte('{')
+	b := []byte{'{'}
 	for i, k := range s.keys {
 		if i > 0 {
-			b.WriteByte(',')
+			b = append(b, ',')
 		}
 		kb, _ := json.Marshal(k)
-		b.Write(kb)
-		b.WriteByte(':')
-		if k == field {
-			b.WriteByte('[')
-			for j, e := range s.arr {
-				if j > 0 {
-					b.WriteByte(',')
-				}
-				b.Write(e)
-			}
-			b.WriteByte(']')
-		} else {
-			b.Write(s.vals[k])
+		b = append(append(b, kb...), ':')
+		if k != field {
+			b = append(b, s.vals[k]...)
+			continue
 		}
+		b = append(b, '[')
+		for j, e := range s.arr {
+			if j > 0 {
+				b = append(b, ',')
+			}
+			b = append(b, e...)
+		}
+		b = append(b, ']')
 	}
-	b.WriteByte('}')
-	return b.Bytes()
+	return append(b, '}')
 }
 
 // fetchLines returns the wanted lines of a data object.
