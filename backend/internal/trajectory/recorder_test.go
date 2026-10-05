@@ -14,9 +14,9 @@ import (
 func TestBatchRoundTrip(t *testing.T) {
 	var history strings.Builder
 	for i := 0; i < 2000; i++ { // ~100 KB of non-repeating text
-		history.WriteString(strings.Repeat(string(rune('a'+i%26)), i%7+1))
-		history.WriteString(" ")
-		history.WriteString(string(rune('0' + i*7919%10)))
+		_, _ = history.WriteString(strings.Repeat(string(rune('a'+i%26)), i%7+1))
+		_, _ = history.WriteString(" ")
+		_, _ = history.WriteString(string(rune('0' + i*7919%10)))
 	}
 	b := newBatch(dataWindow)
 	raw := 0
