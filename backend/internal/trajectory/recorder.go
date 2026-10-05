@@ -66,7 +66,8 @@ type Meta struct {
 type Record struct {
 	Meta
 	RequestHeaders map[string]string `json:"request_headers,omitempty"`
-	RequestBody    Body              `json:"request_body"`
+	RequestBody    Body              `json:"request_body"` // null when RequestDelta is set
+	RequestDelta   *Delta            `json:"request_delta,omitempty"`
 	ResponseBody   Body              `json:"response_body"`
 }
 
@@ -211,15 +212,20 @@ func (r *Recorder) run() {
 
 	data, index := newBatch(dataWindow), newBatch(0)
 	n := 0
+	dd := newDeduper()
+	cur := new(string) // key of the batch being written, set once it is spooled
 	flush := func() {
 		if n == 0 {
 			return
 		}
+		saved := false
 		if err := data.close(); err == nil {
 			// Index goes to the spool only if its data made it.
 			now := time.Now().UTC()
 			name := fmt.Sprintf("%s/%s-%d-n%d"+ext, now.Format("2006/01/02/15"), r.host, now.UnixNano(), n)
 			if r.spool(r.prefix+"data/"+name, data.buf.Bytes()) {
+				saved = true
+				*cur = r.prefix + "data/" + name
 				if err := index.close(); err == nil {
 					r.spool(r.prefix+"index/"+name, index.buf.Bytes())
 				}
@@ -227,6 +233,11 @@ func (r *Recorder) run() {
 		} else {
 			slog.Error("trajectory: zstd close failed, batch lost", "error", err, "records", n)
 		}
+		if !saved {
+			dd.reset() // later deltas must not point into the lost batch
+		}
+		dd.evict(time.Now())
+		cur = new(string)
 		data.reset()
 		index.reset()
 		n = 0
@@ -242,13 +253,16 @@ func (r *Recorder) run() {
 				flush()
 				return
 			}
+			reqBytes := len(rec.RequestBody.Data)
+			dd.process(rec, n, cur, time.Now())
 			if err := data.enc.Encode(rec); err != nil {
 				slog.Error("trajectory: encode failed", "error", err, "request_id", rec.RequestID)
+				dd.reset() // process already remembered line n
 				continue
 			}
 			_ = index.enc.Encode(IndexEntry{
 				Meta: rec.Meta, Line: n,
-				RequestBytes: len(rec.RequestBody.Data), ResponseBytes: len(rec.ResponseBody.Data),
+				RequestBytes: reqBytes, ResponseBytes: len(rec.ResponseBody.Data),
 			})
 			n++
 			if data.buf.Len() >= flushBytes {
