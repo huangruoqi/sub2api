@@ -71,6 +71,25 @@ Each index object sits next to its data object and holds the same lines, minus h
 only opens a data object when you view a single request. `n<count>` in the name is the number of records, so totals
 come from listing objects alone, without downloading anything.
 
+**Request deltas.** Agent clients resend the whole conversation every turn. When a request extends one that this
+replica already stored (same API key, session, path and first message), the record has `request_body: null` and a
+`request_delta` instead:
+
+```json
+{"chain": [{"key": "trajectories/data/…", "line": 3}, {"line": 17}],
+ "keys": ["model", "messages", "system", "tools"], "set": {"model": "…"},
+ "field": "messages", "keep": 41, "append": [ … ]}
+```
+
+To rebuild it, start from the full `request_body` of `chain[0]`, then apply each later chain record's delta, then this one:
+- top-level keys come out in `keys` order;
+- each value comes from `set` if present, otherwise from the previous body;
+- `field` (`messages` / `input` / `contents`) is the previous body's first `keep` elements followed by `append`.
+
+A ref without `key` points into the same object. Every 32 requests a full body is written again, so a chain is at
+most 31 refs. The dashboard rebuilds bodies for you, and the rebuilt body is the same JSON value as the original.
+With raw S3 tools you have to follow the chain yourself.
+
 Token usage is in the response body (the final `usage` / `message_delta` event). Billing rows are in `usage_logs`.
 Websocket traffic (`/live`, realtime) is not captured.
 
