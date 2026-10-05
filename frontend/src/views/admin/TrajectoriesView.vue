@@ -276,7 +276,7 @@ type FilterKey = 'request_id' | 'session_id' | 'model' | 'user_id' | 'api_key_id
 const filters = reactive<Record<FilterKey, string>>({
   request_id: '', session_id: '', model: '', user_id: '', api_key_id: '', account_id: '', group_id: '', path: '', status: ''
 })
-const groupBy = ref<TrajectoryGroupBy>('')
+const groupBy = ref<TrajectoryGroupBy>('session') // one row per conversation by default
 const order = ref<'asc' | 'desc'>('desc')
 const loading = ref(false)
 const entries = ref<TrajectoryEntry[]>([])
@@ -415,7 +415,7 @@ function search() {
 
 function resetFilters() {
   for (const k of Object.keys(filters) as FilterKey[]) filters[k] = ''
-  groupBy.value = ''
+  groupBy.value = 'session'
   order.value = 'desc'
   timeRange.value = '1h'
   search()
