@@ -197,7 +197,7 @@ func (r *Recorder) ReadRecord(ctx context.Context, key string, line int) (json.R
 	if err != nil {
 		return nil, err
 	}
-	return expand(key, lines[line], func(k string, want []int) (map[int]json.RawMessage, error) {
+	return expandOrKeep(key, lines[line], func(k string, want []int) (map[int]json.RawMessage, error) {
 		if !r.validDataKey(k) {
 			return nil, fmt.Errorf("invalid chain key %q", k)
 		}

@@ -481,6 +481,9 @@ const detailText = computed(() => {
   if (!d) return ''
   switch (detailTab.value) {
     case 'request':
+      if (d.request_rebuild_error) {
+        return `${t('admin.trajectories.rebuildFailed', { error: d.request_rebuild_error })}\n\n${pretty(d.request_delta)}`
+      }
       return pretty(d.request_body)
     case 'response':
       return pretty(d.response_body)
@@ -507,13 +510,20 @@ function copyDetail() {
  * Responses (JSON or SSE); anything else falls back to the raw tabs.
  */
 function conversationText(d: TrajectoryRecord): string {
-  const req = unwrap(d.request_body) as any
+  // Broken delta chain: only this turn's new messages are known.
+  const req = (d.request_delta && d.request_body == null
+    ? { [d.request_delta.field]: d.request_delta.append }
+    : unwrap(d.request_body)) as any
   const parts: string[] = []
-  const msgs: any[] = req?.messages ?? (Array.isArray(req?.input) ? req.input : [])
+  if (d.request_rebuild_error) parts.push(t('admin.trajectories.rebuildFailed', { error: d.request_rebuild_error }))
+  const msgs: any[] = req?.messages ?? (Array.isArray(req?.input) ? req.input : Array.isArray(req?.contents) ? req.contents : [])
   const lastUser = [...msgs].reverse().find((m) => m?.role === 'user')
   if (req?.system) parts.push(`[system]\n${contentText(req.system)}`)
   if (typeof req?.input === 'string') parts.push(`[user]\n${req.input}`)
-  else if (lastUser) parts.push(`[user · turn ${msgs.length}]\n${contentText(lastUser.content)}`)
+  else if (lastUser) {
+    const turns = d.request_delta ? d.request_delta.keep + msgs.length : msgs.length
+    parts.push(`[user · turn ${turns}]\n${contentText(lastUser.content)}`)
+  }
   parts.push(`[assistant]\n${responseText(unwrap(d.response_body)) || t('admin.trajectories.noText')}`)
   return parts.join('\n\n')
 }
