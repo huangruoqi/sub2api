@@ -62,9 +62,14 @@ group, upstream account, model, status, latency and request headers, with creden
 into gzip JSONL objects in a **private Railway Bucket**:
 
 ```
-trajectories/YYYY/MM/DD/HH/<replica>-<unixnano>.jsonl.gz     one JSON record per line
-trajectories/backfill/<date>/<table>.jsonl.gz                 one-off history export
+trajectories/data/YYYY/MM/DD/HH/<replica>-<unixnano>-n<count>.jsonl.gz    full records, one JSON per line
+trajectories/index/YYYY/MM/DD/HH/<same name>                              metadata only (no headers/bodies) + line number
+trajectories/backfill/<date>/<table>.jsonl.gz                             one-off history export
 ```
+
+Each index object sits next to its data object and holds the same lines, minus headers and bodies. The dashboard reads the index and
+only opens a data object when you view a single request. `n<count>` in the name is the number of records, so totals
+come from listing objects alone, without downloading anything.
 
 Token usage is in the response body (the final `usage` / `message_delta` event). Billing rows are in `usage_logs`.
 Websocket traffic (`/live`, realtime) is not captured.
@@ -94,13 +99,27 @@ longer bodies are stored as `{"truncated": true, "data": ...}`), `TRAJECTORY_SPO
 3. Redeploy. The log line `trajectory archive enabled` confirms it is on. Misconfiguration logs
    `Trajectory archive disabled: ...` and the gateway keeps serving.
 
-### Reading it
+### Dashboard
+Admin → **Trajectories** (`/admin/trajectories`):
+- **Totals**: archived requests, gzip size, the latest day, batches waiting in the spool, dropped records, and a per-day chart.
+  This comes from a cached (2 min) listing of `data/`.
+- **Browse**: pick a window of up to 24h and filter by request id, session, model, user, key, account or status.
+- **Group by** session / model / user / key / account / group / path / status. Each group shows count, errors, average latency,
+  size and time span. Click a group to drill into its requests. A session opens oldest-first, so you can read it as a conversation.
+- **Detail**: a "Conversation" view (system prompt, last user turn, assistant output reassembled from SSE),
+  plus the raw request, response and headers.
+
+`session` is the client's own conversation id: Claude Code's `metadata.user_id` session, or Codex/OpenAI
+`session_id` headers / `prompt_cache_key`. Requests without one are grouped under "(none)".
+The dashboard reads the bucket through the sub2api service, so it works only where `TRAJECTORY_ENABLED=true`.
+
+### Reading it with S3 tools
 Use the bucket's credentials (Bucket → **Credentials** tab) with any S3 client:
 
 ```bash
 export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_DEFAULT_REGION=auto
-aws s3 ls s3://<BUCKET>/trajectories/ --recursive --endpoint-url https://t3.storageapi.dev
-aws s3 cp s3://<BUCKET>/trajectories/2026/10/04/12/<file>.jsonl.gz - --endpoint-url https://t3.storageapi.dev \
+aws s3 ls s3://<BUCKET>/trajectories/data/ --recursive --endpoint-url https://t3.storageapi.dev
+aws s3 cp s3://<BUCKET>/trajectories/data/2026/10/04/12/<file>.jsonl.gz - --endpoint-url https://t3.storageapi.dev \
   | gunzip | jq 'select(.request_id=="...")'
 ```
 

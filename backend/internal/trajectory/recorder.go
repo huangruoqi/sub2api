@@ -35,26 +35,43 @@ const (
 	flushBytes    = 64 << 20 // compressed
 )
 
-// Record is one line of the archive.
+// Meta is everything about a request except headers and bodies. It is
+// stored in both the data line and the index line.
+type Meta struct {
+	Time            time.Time `json:"ts"`
+	RequestID       string    `json:"request_id,omitempty"`
+	ClientRequestID string    `json:"client_request_id,omitempty"`
+	SessionID       string    `json:"session_id,omitempty"`
+	Method          string    `json:"method"`
+	Path            string    `json:"path"`
+	Status          int       `json:"status"`
+	LatencyMs       int64     `json:"latency_ms"`
+	UserID          int64     `json:"user_id,omitempty"`
+	APIKeyID        int64     `json:"api_key_id,omitempty"`
+	GroupID         int64     `json:"group_id,omitempty"`
+	AccountID       int64     `json:"account_id,omitempty"`
+	Model           string    `json:"model,omitempty"`
+	UpstreamModel   string    `json:"upstream_model,omitempty"`
+	Stream          bool      `json:"stream"`
+	ResponseType    string    `json:"response_content_type,omitempty"`
+}
+
+// Record is one line of a data object.
 type Record struct {
-	Time            time.Time         `json:"ts"`
-	RequestID       string            `json:"request_id,omitempty"`
-	ClientRequestID string            `json:"client_request_id,omitempty"`
-	Method          string            `json:"method"`
-	Path            string            `json:"path"`
-	Status          int               `json:"status"`
-	LatencyMs       int64             `json:"latency_ms"`
-	UserID          int64             `json:"user_id,omitempty"`
-	APIKeyID        int64             `json:"api_key_id,omitempty"`
-	GroupID         int64             `json:"group_id,omitempty"`
-	AccountID       int64             `json:"account_id,omitempty"`
-	Model           string            `json:"model,omitempty"`
-	UpstreamModel   string            `json:"upstream_model,omitempty"`
-	Stream          bool              `json:"stream"`
-	RequestHeaders  map[string]string `json:"request_headers,omitempty"`
-	RequestBody     Body              `json:"request_body"`
-	ResponseType    string            `json:"response_content_type,omitempty"`
-	ResponseBody    Body              `json:"response_body"`
+	Meta
+	RequestHeaders map[string]string `json:"request_headers,omitempty"`
+	RequestBody    Body              `json:"request_body"`
+	ResponseBody   Body              `json:"response_body"`
+}
+
+// IndexEntry is one line of an index object: Meta plus where the full record
+// lives (Line in the sibling data object; Key is filled in on read).
+type IndexEntry struct {
+	Meta
+	Line          int    `json:"line"`
+	RequestBytes  int    `json:"request_bytes"`
+	ResponseBytes int    `json:"response_bytes"`
+	Key           string `json:"key,omitempty"`
 }
 
 // Body is stored inline as JSON when it is JSON, as a string when it is UTF-8 text
@@ -94,6 +111,11 @@ type Recorder struct {
 	done    chan struct{}
 	closing sync.Once
 	dropped atomic.Int64
+
+	summaryMu sync.Mutex
+	summary   *Summary
+	indexMu   sync.Mutex
+	index     map[string][]IndexEntry // immutable objects, cached by key
 }
 
 var std atomic.Pointer[Recorder]
@@ -140,6 +162,7 @@ func Init(cfg config.TrajectoryConfig) error {
 		maxBody:  cfg.MaxBodyBytes,
 		ch:       make(chan *Record, queueSize),
 		done:     make(chan struct{}),
+		index:    map[string][]IndexEntry{},
 	}
 	go r.run()
 	std.Store(r)
@@ -180,21 +203,26 @@ func (r *Recorder) run() {
 	defer close(r.done)
 	r.uploadSpool() // leftovers from a previous process
 
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	enc := json.NewEncoder(gz)
+	data, index := newBatch(), newBatch()
 	n := 0
 	flush := func() {
 		if n == 0 {
 			return
 		}
-		if err := gz.Close(); err == nil {
-			r.spool(buf.Bytes())
+		if err := data.close(); err == nil {
+			// Index goes to the spool only if its data made it.
+			now := time.Now().UTC()
+			name := fmt.Sprintf("%s/%s-%d-n%d.jsonl.gz", now.Format("2006/01/02/15"), r.host, now.UnixNano(), n)
+			if r.spool(r.prefix+"data/"+name, data.buf.Bytes()) {
+				if err := index.close(); err == nil {
+					r.spool(r.prefix+"index/"+name, index.buf.Bytes())
+				}
+			}
 		} else {
 			slog.Error("trajectory: gzip close failed, batch lost", "error", err, "records", n)
 		}
-		buf.Reset()
-		gz.Reset(&buf)
+		data.reset()
+		index.reset()
 		n = 0
 		r.uploadSpool()
 	}
@@ -208,12 +236,16 @@ func (r *Recorder) run() {
 				flush()
 				return
 			}
-			if err := enc.Encode(rec); err != nil {
+			if err := data.enc.Encode(rec); err != nil {
 				slog.Error("trajectory: encode failed", "error", err, "request_id", rec.RequestID)
 				continue
 			}
+			_ = index.enc.Encode(IndexEntry{
+				Meta: rec.Meta, Line: n,
+				RequestBytes: len(rec.RequestBody.Data), ResponseBytes: len(rec.ResponseBody.Data),
+			})
 			n++
-			if buf.Len() >= flushBytes {
+			if data.buf.Len() >= flushBytes {
 				flush()
 			}
 		case <-ticker.C:
@@ -222,21 +254,37 @@ func (r *Recorder) run() {
 	}
 }
 
+type batch struct {
+	buf bytes.Buffer
+	gz  *gzip.Writer
+	enc *json.Encoder
+}
+
+func newBatch() *batch {
+	b := &batch{}
+	b.gz = gzip.NewWriter(&b.buf)
+	b.enc = json.NewEncoder(b.gz)
+	return b
+}
+
+func (b *batch) close() error { return b.gz.Close() }
+func (b *batch) reset()       { b.buf.Reset(); b.gz.Reset(&b.buf) }
+
 // spool writes a finished batch to disk first, so an upload outage or restart
 // doesn't lose it. The file path under spoolDir is the object key.
-func (r *Recorder) spool(data []byte) {
-	now := time.Now().UTC()
-	key := fmt.Sprintf("%s%s/%s-%d.jsonl.gz", r.prefix, now.Format("2006/01/02/15"), r.host, now.UnixNano())
+func (r *Recorder) spool(key string, data []byte) bool {
 	path := filepath.Join(r.spoolDir, filepath.FromSlash(key))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
 		if err = os.WriteFile(path, data, 0o644); err == nil {
-			return
+			return true
 		}
 	}
 	// Disk failed; try a direct upload rather than drop the batch.
 	if err := r.put(key, data); err != nil {
 		slog.Error("trajectory: spool and upload both failed, batch lost", "error", err, "key", key)
+		return false
 	}
+	return true
 }
 
 func (r *Recorder) uploadSpool() {

@@ -9,6 +9,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/Wei-Shaw/sub2api/internal/trajectory"
 
 	"github.com/gin-gonic/gin"
@@ -50,17 +51,20 @@ func TrajectoryMiddleware() gin.HandlerFunc {
 		c.Next()
 
 		r := &trajectory.Record{
-			Time:           start.UTC(),
-			Method:         c.Request.Method,
-			Path:           c.Request.URL.Path,
-			Status:         w.Status(),
-			LatencyMs:      time.Since(start).Milliseconds(),
-			Model:          c.GetString(opsModelKey),
-			UpstreamModel:  c.GetString(opsUpstreamModelKey),
-			Stream:         c.GetBool(opsStreamKey),
+			Meta: trajectory.Meta{
+				Time:          start.UTC(),
+				SessionID:     service.TrajectorySessionID(c, reqBody),
+				Method:        c.Request.Method,
+				Path:          c.Request.URL.Path,
+				Status:        w.Status(),
+				LatencyMs:     time.Since(start).Milliseconds(),
+				Model:         c.GetString(opsModelKey),
+				UpstreamModel: c.GetString(opsUpstreamModelKey),
+				Stream:        c.GetBool(opsStreamKey),
+				ResponseType:  w.Header().Get("Content-Type"),
+			},
 			RequestHeaders: trajectoryHeaders(c.Request.Header),
 			RequestBody:    truncatedBody(reqBody, rec.MaxBodyBytes()),
-			ResponseType:   w.Header().Get("Content-Type"),
 			ResponseBody:   trajectory.Body{Data: w.buf.Bytes(), Truncated: w.truncated},
 		}
 		r.RequestID, _ = c.Request.Context().Value(ctxkey.RequestID).(string)
