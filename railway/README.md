@@ -90,6 +90,12 @@ A ref without `key` points into the same object. Every 32 requests a full body i
 most 31 refs. The dashboard rebuilds bodies for you, and the rebuilt body is the same JSON value as the original.
 With raw S3 tools you have to follow the chain yourself.
 
+**Deleting objects breaks chains.** Later deltas can point into any `data/` object of the last ~30 minutes of a
+conversation. If one is deleted, those requests open with `request_rebuild_error` and only their new messages.
+The response, headers and metadata are unaffected. The running service still remembers chains into the deleted
+object, so **redeploy after deleting** to make it start fresh full copies. Deleting whole old days (> 1 hour old,
+with nothing newer depending on them) is safe once the conversations of that period have ended.
+
 Token usage is in the response body (the final `usage` / `message_delta` event). Billing rows are in `usage_logs`.
 Websocket traffic (`/live`, realtime) is not captured.
 

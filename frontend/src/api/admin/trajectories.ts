@@ -87,6 +87,9 @@ export interface TrajectoryRecord extends Omit<TrajectoryEntry, 'line' | 'key' |
   request_headers?: Record<string, string>
   request_body: unknown
   response_body: unknown
+  /** Only new messages are present when the full request couldn't be rebuilt. */
+  request_delta?: { field: string; keep: number; append: unknown[] }
+  request_rebuild_error?: string
 }
 
 export async function summary(): Promise<{ enabled: boolean; summary?: TrajectorySummary }> {

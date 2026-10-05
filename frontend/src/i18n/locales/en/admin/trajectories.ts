@@ -24,6 +24,7 @@ export default {
     copy: 'Copy',
     copied: 'Copied',
     noText: '(no text output found; see the Response tab)',
+    rebuildFailed: '⚠ Full request unavailable: an earlier record it depends on is missing ({error}). Showing only this turn\'s new messages.',
     detailTitle: 'Archived Request',
     ranges: { '15m': 'Last 15 minutes', '1h': 'Last 1 hour', '6h': 'Last 6 hours', '24h': 'Last 24 hours' },
     tabs: { text: 'Conversation', request: 'Request', response: 'Response', headers: 'Headers' },

@@ -277,6 +277,22 @@ func (s *bodyState) body(field string) json.RawMessage {
 // fetchLines returns the wanted lines of a data object.
 type fetchLines func(key string, lines []int) (map[int]json.RawMessage, error)
 
+// expandOrKeep is expand, except that when an earlier record of the chain is
+// gone (deleted object, lost batch) it returns raw as is, delta included, plus
+// request_rebuild_error. The rest of the record is intact and still worth showing.
+func expandOrKeep(key string, raw json.RawMessage, fetch fetchLines) (json.RawMessage, error) {
+	out, err := expand(key, raw, fetch)
+	if err == nil {
+		return out, nil
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return nil, err
+	}
+	fields["request_rebuild_error"], _ = json.Marshal(err.Error())
+	return json.Marshal(fields)
+}
+
 // expand returns raw (a record line read from data object key) with request_body
 // rebuilt and request_delta removed. Records without a delta are returned as is.
 func expand(key string, raw json.RawMessage, fetch fetchLines) (json.RawMessage, error) {
@@ -303,7 +319,7 @@ func expand(key string, raw json.RawMessage, fetch fetchLines) (json.RawMessage,
 	for k, lines := range want {
 		m, err := fetch(k, lines)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("earlier record in %s: %w", k, err)
 		}
 		got[k] = m
 	}

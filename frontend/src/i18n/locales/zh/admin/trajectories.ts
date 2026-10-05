@@ -24,6 +24,7 @@ export default {
     copy: '复制',
     copied: '已复制',
     noText: '（未找到文本输出，请查看“响应”）',
+    rebuildFailed: '⚠ 无法还原完整请求：它依赖的更早记录已缺失（{error}），下面只显示这一轮新增的消息。',
     detailTitle: '归档请求',
     ranges: { '15m': '最近 15 分钟', '1h': '最近 1 小时', '6h': '最近 6 小时', '24h': '最近 24 小时' },
     tabs: { text: '对话', request: '请求', response: '响应', headers: '请求头' },

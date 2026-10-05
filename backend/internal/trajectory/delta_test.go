@@ -138,3 +138,29 @@ func TestDeltaSkipsNonConversations(t *testing.T) {
 		t.Fatal("truncated body must not become a delta")
 	}
 }
+
+// Deleting an object that a chain goes through must not hide the record.
+func TestDeltaBrokenChainKeepsRecord(t *testing.T) {
+	dd := newDeduper()
+	cur := new(string)
+	var lines []json.RawMessage
+	for i, body := range []string{`{"messages":[1]}`, `{"messages":[1,2]}`} {
+		rec := &Record{Meta: Meta{RequestID: fmt.Sprint(i)}, RequestBody: Body{Data: []byte(body)}}
+		dd.process(rec, i, cur, time.Now())
+		b, _ := json.Marshal(rec)
+		lines = append(lines, b)
+	}
+	gone := func(string, []int) (map[int]json.RawMessage, error) { return nil, fmt.Errorf("NoSuchKey") }
+	got, err := expandOrKeep("k", lines[1], gone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec struct {
+		RequestID string `json:"request_id"`
+		Delta     *Delta `json:"request_delta"`
+		Error     string `json:"request_rebuild_error"`
+	}
+	if err := json.Unmarshal(got, &rec); err != nil || rec.RequestID != "1" || rec.Delta == nil || len(rec.Delta.Append) != 1 || !strings.Contains(rec.Error, "NoSuchKey") {
+		t.Fatalf("got %s (%v)", got, err)
+	}
+}
