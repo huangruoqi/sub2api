@@ -54,7 +54,97 @@ Railway does not notice when a tag is overwritten. To make pushes redeploy autom
 
 Without these secrets the workflow still pushes the image. You then redeploy by hand: service → **Deployments → Redeploy**.
 
-## Workflow
+## Trajectory archive (issue #8)
+
+Every authenticated gateway POST is archived with its full request body and full response body
+(SSE streams are kept as the raw event text). Each record also has request id, user, API key,
+group, upstream account, model, status, latency and request headers, with credential headers removed. Records are batched every minute
+into gzip JSONL objects in a **private Railway Bucket**:
+
+```
+trajectories/data/YYYY/MM/DD/HH/<replica>-<unixnano>-n<count>.jsonl.gz    full records, one JSON per line
+trajectories/index/YYYY/MM/DD/HH/<same name>                              metadata only (no headers/bodies) + line number
+trajectories/backfill/<date>/<table>.jsonl.gz                             one-off history export
+```
+
+Each index object sits next to its data object and holds the same lines, minus headers and bodies. The dashboard reads the index and
+only opens a data object when you view a single request. `n<count>` in the name is the number of records, so totals
+come from listing objects alone, without downloading anything.
+
+Token usage is in the response body (the final `usage` / `message_delta` event). Billing rows are in `usage_logs`.
+Websocket traffic (`/live`, realtime) is not captured.
+
+Writes never block or fail a user request. A batch is written to the spool dir first (default
+`/app/data/trajectory-spool` on the volume) and then uploaded. Failed uploads are retried on the next flush and on the next start.
+If the in-memory queue is full (4096 records), records are dropped and a warning is logged.
+
+### Setup (per environment)
+1. Project canvas → **Create → Bucket**. Each environment gets its own bucket and credentials.
+2. On the **sub2api** service, add these variables (`Bucket` is the bucket service's name):
+
+| Variable | Value |
+|---|---|
+| `TRAJECTORY_ENABLED` | `true` |
+| `TRAJECTORY_BUCKET` | `${{Bucket.BUCKET}}` (not `RAILWAY_BUCKET_NAME`) |
+| `TRAJECTORY_ENDPOINT` | `${{Bucket.ENDPOINT}}` (`https://t3.storageapi.dev`) |
+| `TRAJECTORY_REGION` | `${{Bucket.REGION}}` (`auto`) |
+| `TRAJECTORY_ACCESS_KEY_ID` | `${{Bucket.ACCESS_KEY_ID}}` |
+| `TRAJECTORY_SECRET_ACCESS_KEY` | `${{Bucket.SECRET_ACCESS_KEY}}` |
+| `TRAJECTORY_FORCE_PATH_STYLE` | `false`. Set `true` only if the bucket's Credentials tab says path-style. |
+| `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` | `30`, so the last batch is uploaded on redeploy. It is in the spool either way. |
+
+Optional settings: `TRAJECTORY_PREFIX` (default `trajectories/`), `TRAJECTORY_MAX_BODY_BYTES` (default 32 MiB per body;
+longer bodies are stored as `{"truncated": true, "data": ...}`), `TRAJECTORY_SPOOL_DIR`.
+
+3. Redeploy. The log line `trajectory archive enabled` confirms it is on. Misconfiguration logs
+   `Trajectory archive disabled: ...` and the gateway keeps serving.
+
+### Dashboard
+Admin → **Trajectories** (`/admin/trajectories`):
+- **Totals**: archived requests, gzip size, the latest day, batches waiting in the spool, dropped records, and a per-day chart.
+  This comes from a cached (2 min) listing of `data/`.
+- **Browse**: pick a window of up to 24h and filter by request id, session, model, user, key, account or status.
+- **Group by** session / model / user / key / account / group / path / status. Each group shows count, errors, average latency,
+  size and time span. Click a group to drill into its requests. A session opens oldest-first, so you can read it as a conversation.
+- **Detail**: a "Conversation" view (system prompt, last user turn, assistant output reassembled from SSE),
+  plus the raw request, response and headers.
+
+`session` is the client's own conversation id: Claude Code's `metadata.user_id` session, or Codex/OpenAI
+`session_id` headers / `prompt_cache_key`. Requests without one are grouped under "(none)".
+The dashboard reads the bucket through the sub2api service, so it works only where `TRAJECTORY_ENABLED=true`.
+
+### Reading it with S3 tools
+Use the bucket's credentials (Bucket → **Credentials** tab) with any S3 client:
+
+```bash
+export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_DEFAULT_REGION=auto
+aws s3 ls s3://<BUCKET>/trajectories/data/ --recursive --endpoint-url https://t3.storageapi.dev
+aws s3 cp s3://<BUCKET>/trajectories/data/2026/10/04/12/<file>.jsonl.gz - --endpoint-url https://t3.storageapi.dev \
+  | gunzip | jq 'select(.request_id=="...")'
+```
+
+The bucket is private (Railway has no public buckets). Only people with the credentials can read it, so keep them to ops.
+
+### Backfill
+Request/response bodies were never stored before this, so only metadata can be backfilled. `railway/backfill.sh` exports
+`usage_logs` and the `ops_*` tables, one `row_to_json` per line, to `trajectories/backfill/<date>/`.
+Run it from your machine against each environment you want archived. It needs `psql` and the `aws` CLI.
+
+```bash
+DATABASE_URL='<Postgres → Variables → DATABASE_PUBLIC_URL>' \
+BUCKET=<BUCKET> ENDPOINT=https://t3.storageapi.dev \
+AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... \
+./railway/backfill.sh
+```
+
+### Retention
+- Bucket objects are kept forever. Railway buckets have no lifecycle rules. Storage costs $0.015/GB-month, and
+  egress/API calls are free. Check the bucket size after the first week.
+- The `ops_*` tables are still auto-deleted after 30 days by the ops cleanup job. Run the backfill first, then
+  turn cleanup off in the admin UI (**Ops Monitoring → Settings → Advanced Settings → Data Retention Policy → Enable Data Cleanup**). The DB setting overrides `OPS_CLEANUP_ENABLED`.
+  If you would rather keep cleanup on, re-run the backfill before each retention window passes.
+  New traffic no longer depends on these tables, because the trajectory archive is the full record.
+
 
 1. Work on the `dev` branch → push → image `:dev` → dev environment redeploys.
 2. Verify on the dev domain:

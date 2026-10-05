@@ -427,6 +427,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/trajectories',
+    name: 'AdminTrajectories',
+    component: () => import('@/views/admin/TrajectoriesView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Trajectories',
+      titleKey: 'admin.trajectories.title',
+      descriptionKey: 'admin.trajectories.description'
+    }
+  },
+  {
     path: '/admin/audit-logs',
     name: 'AdminAuditLogs',
     component: () => import('@/views/admin/AuditLogView.vue'),

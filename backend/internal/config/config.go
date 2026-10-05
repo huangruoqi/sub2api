@@ -105,6 +105,7 @@ type Config struct {
 	Idempotency             IdempotencyConfig             `mapstructure:"idempotency"`
 	BatchImage              BatchImageConfig              `mapstructure:"batch_image"`
 	ImageStorage            ImageStorageConfig            `mapstructure:"image_storage"`
+	Trajectory              TrajectoryConfig              `mapstructure:"trajectory"`
 	Plugins                 PluginConfig                  `mapstructure:"plugins"`
 
 	// Enforce only API-key spending windows in simple mode.
@@ -277,6 +278,21 @@ type ImageStorageConfig struct {
 // IsConfigured 检查对象存储必要字段是否已配置
 func (c *ImageStorageConfig) IsConfigured() bool {
 	return c.Bucket != "" && c.AccessKeyID != "" && c.SecretAccessKey != ""
+}
+
+// TrajectoryConfig archives full gateway request/response bodies as gzip JSONL
+// to an S3-compatible bucket (fork feature, see railway/README.md).
+type TrajectoryConfig struct {
+	Enabled         bool   `mapstructure:"enabled"`
+	Endpoint        string `mapstructure:"endpoint"`
+	Region          string `mapstructure:"region"`
+	Bucket          string `mapstructure:"bucket"`
+	AccessKeyID     string `mapstructure:"access_key_id"`
+	SecretAccessKey string `mapstructure:"secret_access_key"`
+	Prefix          string `mapstructure:"prefix"`
+	ForcePathStyle  bool   `mapstructure:"force_path_style"`
+	MaxBodyBytes    int    `mapstructure:"max_body_bytes"` // per request/response body; longer bodies are truncated
+	SpoolDir        string `mapstructure:"spool_dir"`      // batches wait here until uploaded; put it on a volume
 }
 
 // Active 返回异步图片任务是否可用：开关打开且凭证齐全
@@ -2298,6 +2314,18 @@ func setDefaults() {
 	viper.SetDefault("image_storage.access_key_id", "")
 	viper.SetDefault("image_storage.secret_access_key", "")
 	viper.SetDefault("image_storage.public_base_url", "")
+
+	// Trajectory archive (empty defaults so TRAJECTORY_* env vars are picked up)
+	viper.SetDefault("trajectory.enabled", false)
+	viper.SetDefault("trajectory.endpoint", "")
+	viper.SetDefault("trajectory.region", "auto")
+	viper.SetDefault("trajectory.bucket", "")
+	viper.SetDefault("trajectory.access_key_id", "")
+	viper.SetDefault("trajectory.secret_access_key", "")
+	viper.SetDefault("trajectory.prefix", "trajectories/")
+	viper.SetDefault("trajectory.force_path_style", false)
+	viper.SetDefault("trajectory.max_body_bytes", 32<<20)
+	viper.SetDefault("trajectory.spool_dir", "data/trajectory-spool")
 
 	// Ops (vNext)
 	viper.SetDefault("ops.enabled", true)

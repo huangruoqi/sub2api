@@ -21,6 +21,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/setup"
+	"github.com/Wei-Shaw/sub2api/internal/trajectory"
 	"github.com/Wei-Shaw/sub2api/internal/web"
 
 	"github.com/gin-gonic/gin"
@@ -148,6 +149,10 @@ func runMainServer() {
 		BuildType: BuildType,
 	}
 
+	if err := trajectory.Init(cfg.Trajectory); err != nil {
+		log.Printf("Trajectory archive disabled: %v", err)
+	}
+
 	app, err := initializeApplication(buildInfo)
 	if err != nil {
 		log.Fatalf("Failed to initialize application: %v", err)
@@ -190,6 +195,12 @@ func runMainServer() {
 	if err := app.Server.Shutdown(ctx); err != nil {
 		log.Printf("Server forced to shutdown: %v", err)
 	}
+
+	// Separate budget: the last batch is written to the spool dir first, so a
+	// timeout here only delays its upload until the next start.
+	trajCtx, trajCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer trajCancel()
+	trajectory.Close(trajCtx)
 
 	log.Println("Server exited")
 }

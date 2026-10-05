@@ -130,6 +130,9 @@ func RegisterAdminRoutes(
 
 		// 操作审计日志
 		registerAuditLogRoutes(admin, h, stepUpAuth)
+
+		// Trajectory archive browser (fork)
+		registerTrajectoryRoutes(admin)
 	}
 }
 
