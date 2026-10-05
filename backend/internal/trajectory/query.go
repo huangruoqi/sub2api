@@ -19,6 +19,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/klauspost/compress/zstd"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -50,8 +51,8 @@ type Summary struct {
 	GeneratedAt time.Time    `json:"generated_at"`
 }
 
-// data/YYYY/MM/DD/HH/<host>-<unixnano>-n<count>.jsonl.gz
-var dataKeyRe = regexp.MustCompile(`data/(\d{4})/(\d{2})/(\d{2})/\d{2}/[^/]*-n(\d+)\.jsonl\.gz$`)
+// data/YYYY/MM/DD/HH/<host>-<unixnano>-n<count>.jsonl.{zst,gz} (gz before zstd)
+var dataKeyRe = regexp.MustCompile(`data/(\d{4})/(\d{2})/(\d{2})/\d{2}/[^/]*-n(\d+)\.jsonl\.(zst|gz)$`)
 
 // Summary lists the whole data/ prefix. ponytail: full listing cached for
 // summaryTTL; ~1 list call per 1000 batches (≈ per replica-day). Keep a running
@@ -214,16 +215,36 @@ func (r *Recorder) get(ctx context.Context, key string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	zr, err := gzip.NewReader(out.Body)
+	return decompress(key, out.Body)
+}
+
+// decompress picks the codec from the key suffix and takes ownership of body.
+func decompress(key string, body io.ReadCloser) (io.ReadCloser, error) {
+	if strings.HasSuffix(key, ".gz") {
+		zr, err := gzip.NewReader(body)
+		if err != nil {
+			_ = body.Close()
+			return nil, err
+		}
+		return struct {
+			io.Reader
+			io.Closer
+		}{zr, body}, nil
+	}
+	zr, err := zstd.NewReader(body, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxWindow(dataWindow))
 	if err != nil {
-		_ = out.Body.Close()
+		_ = body.Close()
 		return nil, err
 	}
-	return struct {
-		io.Reader
-		io.Closer
-	}{zr, out.Body}, nil
+	return zstdBody{zr, body}, nil
 }
+
+type zstdBody struct {
+	*zstd.Decoder
+	body io.Closer
+}
+
+func (z zstdBody) Close() error { z.Decoder.Close(); return z.body.Close() }
 
 func (r *Recorder) list(ctx context.Context, prefix string, fn func(key string, size int64)) error {
 	p := s3.NewListObjectsV2Paginator(r.client, &s3.ListObjectsV2Input{Bucket: aws.String(r.bucket), Prefix: aws.String(prefix)})

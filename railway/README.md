@@ -59,10 +59,10 @@ Without these secrets the workflow still pushes the image. You then redeploy by 
 Every authenticated gateway POST is archived with its full request body and full response body
 (SSE streams are kept as the raw event text). Each record also has request id, user, API key,
 group, upstream account, model, status, latency and request headers, with credential headers removed. Records are batched every minute
-into gzip JSONL objects in a **private Railway Bucket**:
+into zstd-compressed JSONL objects in a **private Railway Bucket**:
 
 ```
-trajectories/data/YYYY/MM/DD/HH/<replica>-<unixnano>-n<count>.jsonl.gz    full records, one JSON per line
+trajectories/data/YYYY/MM/DD/HH/<replica>-<unixnano>-n<count>.jsonl.zst   full records, one JSON per line
 trajectories/index/YYYY/MM/DD/HH/<same name>                              metadata only (no headers/bodies) + line number
 trajectories/backfill/<date>/<table>.jsonl.gz                             one-off history export
 ```
@@ -101,7 +101,7 @@ longer bodies are stored as `{"truncated": true, "data": ...}`), `TRAJECTORY_SPO
 
 ### Dashboard
 Admin → **Trajectories** (`/admin/trajectories`):
-- **Totals**: archived requests, gzip size, the latest day, batches waiting in the spool, dropped records, and a per-day chart.
+- **Totals**: archived requests, compressed size, the latest day, batches waiting in the spool, dropped records, and a per-day chart.
   This comes from a cached (2 min) listing of `data/`.
 - **Browse**: pick a window of up to 24h and filter by request id, session, model, user, key, account or status.
 - **Group by** session / model / user / key / account / group / path / status. Each group shows count, errors, average latency,
@@ -119,8 +119,8 @@ Use the bucket's credentials (Bucket → **Credentials** tab) with any S3 client
 ```bash
 export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_DEFAULT_REGION=auto
 aws s3 ls s3://<BUCKET>/trajectories/data/ --recursive --endpoint-url https://t3.storageapi.dev
-aws s3 cp s3://<BUCKET>/trajectories/data/2026/10/04/12/<file>.jsonl.gz - --endpoint-url https://t3.storageapi.dev \
-  | gunzip | jq 'select(.request_id=="...")'
+aws s3 cp s3://<BUCKET>/trajectories/data/2026/10/04/12/<file>.jsonl.zst - --endpoint-url https://t3.storageapi.dev \
+  | zstd -d --long=27 | jq 'select(.request_id=="...")'
 ```
 
 The bucket is private (Railway has no public buckets). Only people with the credentials can read it, so keep them to ops.
@@ -138,8 +138,10 @@ AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... \
 ```
 
 ### Retention
-- Bucket objects are kept forever. Railway buckets have no lifecycle rules. Storage costs $0.015/GB-month, and
-  egress/API calls are free. Check the bucket size after the first week.
+- Bucket objects are kept forever. Railway buckets have no lifecycle rules. Storage costs $0.015/GB-month.
+  Reading from the bucket is free, but **uploads are billed as service egress ($0.05/GB)**, because buckets are on
+  the public network. Bytes written cost ~3x more in the first month than they do to store. See issue #13.
+- Objects written before the zstd switch are `.jsonl.gz`. The dashboard reads both.
 - The `ops_*` tables are still auto-deleted after 30 days by the ops cleanup job. Run the backfill first, then
   turn cleanup off in the admin UI (**Ops Monitoring → Settings → Advanced Settings → Data Retention Policy → Enable Data Cleanup**). The DB setting overrides `OPS_CLEANUP_ENABLED`.
   If you would rather keep cleanup on, re-run the backfill before each retention window passes.

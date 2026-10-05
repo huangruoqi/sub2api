@@ -6,7 +6,7 @@ export default {
     loadFailed: '加载请求轨迹失败',
     empty: '该时间窗口内没有归档请求',
     totalRecords: '归档请求数',
-    totalSize: '归档大小（gzip）',
+    totalSize: '归档大小（压缩后）',
     today: '最近一天',
     pendingUpload: '待上传',
     dropped: '丢弃数（自启动）',

@@ -6,7 +6,7 @@ export default {
     loadFailed: 'Failed to load trajectories',
     empty: 'No archived requests in this window',
     totalRecords: 'Archived requests',
-    totalSize: 'Archive size (gzip)',
+    totalSize: 'Archive size (compressed)',
     today: 'Latest day',
     pendingUpload: 'Pending upload',
     dropped: 'Dropped (since start)',
