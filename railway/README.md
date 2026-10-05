@@ -104,7 +104,7 @@ Admin → **Trajectories** (`/admin/trajectories`):
 - **Totals**: archived requests, gzip size, the latest day, batches waiting in the spool, dropped records, and a per-day chart.
   This comes from a cached (2 min) listing of `data/`.
 - **Browse**: pick a window of up to 24h and filter by request id, session, model, user, key, account or status.
-- **Group by** session / model / user / key / account / group / path / status. Each group shows count, errors, average latency,
+- **Group by** session (the default, one row per conversation) / model / user / key / account / group / path / status. Each group shows count, errors, average latency,
   size and time span. Click a group to drill into its requests. A session opens oldest-first, so you can read it as a conversation.
 - **Detail**: a "Conversation" view (system prompt, last user turn, assistant output reassembled from SSE),
   plus the raw request, response and headers.
