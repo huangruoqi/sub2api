@@ -94,7 +94,7 @@ func (w *trajectoryWriter) capture(b []byte) {
 		b = b[:max(0, w.limit-w.buf.Len())]
 		w.truncated = true
 	}
-	w.buf.Write(b)
+	_, _ = w.buf.Write(b) // bytes.Buffer.Write never returns an error
 }
 
 func (w *trajectoryWriter) Write(b []byte) (int, error) {
