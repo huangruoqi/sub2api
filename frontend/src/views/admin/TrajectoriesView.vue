@@ -1,8 +1,10 @@
 <template>
   <AppLayout>
-    <TablePageLayout>
+    <!-- Normal page flow, not TablePageLayout: its fixed viewport height left the table
+         0px tall once the summary + filter cards wrapped on narrower screens. -->
+    <div class="space-y-6">
       <!-- Archive totals -->
-      <template #actions>
+      <div>
         <div v-if="enabled === false" class="card p-6 text-sm text-gray-600 dark:text-gray-300">
           {{ t('admin.trajectories.disabled') }}
         </div>
@@ -32,10 +34,10 @@
             </div>
           </div>
         </div>
-      </template>
+      </div>
 
       <!-- Filters -->
-      <template #filters>
+      <div>
         <div v-if="enabled" class="card p-4 sm:p-6">
           <div class="flex flex-wrap items-end gap-4">
             <div class="w-full sm:w-auto sm:min-w-[170px]">
@@ -64,10 +66,10 @@
           </div>
           <p class="mt-3 text-xs text-gray-400">{{ t('admin.trajectories.windowHint') }}</p>
         </div>
-      </template>
+      </div>
 
       <!-- Groups -->
-      <template #table>
+      <div class="card overflow-hidden">
         <DataTable v-if="groupBy" :columns="groupColumns" :data="groups" :loading="loading" row-key="key">
           <template #cell-key="{ row }">
             <button
@@ -143,9 +145,9 @@
           </template>
           <template #empty><EmptyState /></template>
         </DataTable>
-      </template>
+      </div>
 
-      <template #pagination>
+      <div>
         <Pagination
           v-if="total > 0"
           :total="total"
@@ -154,8 +156,8 @@
           @update:page="onPageChange"
           @update:pageSize="onPageSizeChange"
         />
-      </template>
-    </TablePageLayout>
+      </div>
+    </div>
 
     <!-- Record detail -->
     <BaseDialog :show="detailVisible" :title="t('admin.trajectories.detailTitle')" width="full" :close-on-click-outside="true" @close="detailVisible = false">
@@ -225,7 +227,6 @@ import trajectoriesAPI, {
   type TrajectorySummary
 } from '@/api/admin/trajectories'
 import AppLayout from '@/components/layout/AppLayout.vue'
-import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import type { Column } from '@/components/common/types'
 import Pagination from '@/components/common/Pagination.vue'
