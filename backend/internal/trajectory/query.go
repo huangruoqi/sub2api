@@ -187,26 +187,54 @@ func (r *Recorder) readIndex(ctx context.Context, key string) ([]IndexEntry, err
 	return entries, nil
 }
 
-// ReadRecord returns line `line` of data object `key` as raw JSON.
+// ReadRecord returns line `line` of data object `key` as raw JSON, with a delta
+// request body rebuilt from its chain.
 func (r *Recorder) ReadRecord(ctx context.Context, key string, line int) (json.RawMessage, error) {
-	if !strings.HasPrefix(key, r.prefix+"data/") || strings.Contains(key, "..") || line < 0 {
+	if !r.validDataKey(key) || line < 0 {
 		return nil, fmt.Errorf("invalid record reference")
 	}
+	lines, err := r.readLines(ctx, key, []int{line})
+	if err != nil {
+		return nil, err
+	}
+	return expand(key, lines[line], func(k string, want []int) (map[int]json.RawMessage, error) {
+		if !r.validDataKey(k) {
+			return nil, fmt.Errorf("invalid chain key %q", k)
+		}
+		// ponytail: one object at a time; parallelize if detail views get slow.
+		return r.readLines(ctx, k, want)
+	})
+}
+
+func (r *Recorder) validDataKey(key string) bool {
+	return strings.HasPrefix(key, r.prefix+"data/") && !strings.Contains(key, "..")
+}
+
+// readLines returns the wanted lines of a data object in one pass.
+func (r *Recorder) readLines(ctx context.Context, key string, want []int) (map[int]json.RawMessage, error) {
 	body, err := r.get(ctx, key)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = body.Close() }()
+	last := slices.Max(want)
+	out := make(map[int]json.RawMessage, len(want))
 	br := bufio.NewReaderSize(body, 1<<20)
-	for i := 0; ; i++ {
+	for i := 0; i <= last; i++ {
 		b, err := br.ReadBytes('\n')
-		if i == line && len(b) > 0 {
-			return json.RawMessage(b), nil
+		if len(b) > 0 && slices.Contains(want, i) {
+			out[i] = b
 		}
 		if err != nil {
-			return nil, fmt.Errorf("line %d not found in %s", line, key)
+			break
 		}
 	}
+	for _, l := range want {
+		if _, ok := out[l]; !ok {
+			return nil, fmt.Errorf("line %d not found in %s", l, key)
+		}
+	}
+	return out, nil
 }
 
 // get returns the decompressed object body.
