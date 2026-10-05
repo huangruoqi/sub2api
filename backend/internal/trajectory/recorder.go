@@ -1,4 +1,4 @@
-// Package trajectory archives every gateway request/response pair as gzip JSONL
+// Package trajectory archives every gateway request/response pair as zstd JSONL
 // in an S3-compatible bucket (Railway Bucket in production).
 //
 // Records are queued and written by one background goroutine. Recording never blocks
@@ -8,7 +8,6 @@ package trajectory
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,6 +26,7 @@ import (
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/klauspost/compress/zstd"
 )
 
 // ponytail: fixed knobs; promote to config if a week of real traffic says otherwise.
@@ -33,6 +34,11 @@ const (
 	queueSize     = 4096
 	flushInterval = time.Minute
 	flushBytes    = 64 << 20 // compressed
+	// Agent clients resend the whole conversation every turn. A window this big
+	// lets zstd turn a session's repeated prefix into back-references, which gzip's
+	// 32 KB window can't do. Costs ~window bytes of RAM in the writer and in each reader.
+	dataWindow = 128 << 20
+	ext        = ".jsonl.zst"
 )
 
 // Meta is everything about a request except headers and bodies. It is
@@ -203,7 +209,7 @@ func (r *Recorder) run() {
 	defer close(r.done)
 	r.uploadSpool() // leftovers from a previous process
 
-	data, index := newBatch(), newBatch()
+	data, index := newBatch(dataWindow), newBatch(0)
 	n := 0
 	flush := func() {
 		if n == 0 {
@@ -212,14 +218,14 @@ func (r *Recorder) run() {
 		if err := data.close(); err == nil {
 			// Index goes to the spool only if its data made it.
 			now := time.Now().UTC()
-			name := fmt.Sprintf("%s/%s-%d-n%d.jsonl.gz", now.Format("2006/01/02/15"), r.host, now.UnixNano(), n)
+			name := fmt.Sprintf("%s/%s-%d-n%d"+ext, now.Format("2006/01/02/15"), r.host, now.UnixNano(), n)
 			if r.spool(r.prefix+"data/"+name, data.buf.Bytes()) {
 				if err := index.close(); err == nil {
 					r.spool(r.prefix+"index/"+name, index.buf.Bytes())
 				}
 			}
 		} else {
-			slog.Error("trajectory: gzip close failed, batch lost", "error", err, "records", n)
+			slog.Error("trajectory: zstd close failed, batch lost", "error", err, "records", n)
 		}
 		data.reset()
 		index.reset()
@@ -256,19 +262,24 @@ func (r *Recorder) run() {
 
 type batch struct {
 	buf bytes.Buffer
-	gz  *gzip.Writer
+	zw  *zstd.Encoder
 	enc *json.Encoder
 }
 
-func newBatch() *batch {
+// newBatch uses zstd's default window when window is 0.
+func newBatch(window int) *batch {
 	b := &batch{}
-	b.gz = gzip.NewWriter(&b.buf)
-	b.enc = json.NewEncoder(b.gz)
+	opts := []zstd.EOption{zstd.WithEncoderLevel(zstd.SpeedBetterCompression), zstd.WithEncoderConcurrency(1)}
+	if window > 0 {
+		opts = append(opts, zstd.WithWindowSize(window))
+	}
+	b.zw, _ = zstd.NewWriter(&b.buf, opts...) // only fails on invalid options
+	b.enc = json.NewEncoder(b.zw)
 	return b
 }
 
-func (b *batch) close() error { return b.gz.Close() }
-func (b *batch) reset()       { b.buf.Reset(); b.gz.Reset(&b.buf) }
+func (b *batch) close() error { return b.zw.Close() }
+func (b *batch) reset()       { b.buf.Reset(); b.zw.Reset(&b.buf) }
 
 // spool writes a finished batch to disk first, so an upload outage or restart
 // doesn't lose it. The file path under spoolDir is the object key.
@@ -316,9 +327,16 @@ func (r *Recorder) put(key string, data []byte) error {
 		Bucket:      aws.String(r.bucket),
 		Key:         aws.String(key),
 		Body:        bytes.NewReader(data),
-		ContentType: aws.String("application/gzip"),
+		ContentType: aws.String(contentType(key)),
 	})
 	return err
+}
+
+func contentType(key string) string {
+	if strings.HasSuffix(key, ".gz") {
+		return "application/gzip" // spool left over from a pre-zstd build
+	}
+	return "application/zstd"
 }
 
 func nilIfEmpty(s string) *string {
